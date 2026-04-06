@@ -86,6 +86,65 @@ class Intent:
     def __str__(self) -> str:
         return f"Goal={self.goal!r} | Constraints={self.constraints} | Context={self.context!r}"
 
+_AIRTABLE_SCHEMA = [
+    {"name": "Product Families", "fields": [
+        {"name": "Name",         "type": "singleLineText"},
+        {"name": "Product Type", "type": "singleLineText"},
+        {"name": "Description",  "type": "multilineText"},
+    ]},
+    {"name": "Features", "fields": [
+        {"name": "Name",   "type": "singleLineText"},
+        {"name": "Type",   "type": "singleLineText"},
+        {"name": "Family", "type": "singleLineText"},
+    ]},
+    {"name": "Feature Options", "fields": [
+        {"name": "Feature", "type": "singleLineText"},
+        {"name": "Value",   "type": "singleLineText"},
+        {"name": "Family",  "type": "singleLineText"},
+    ]},
+    {"name": "Constraints", "fields": [
+        {"name": "Rule",   "type": "singleLineText"},
+        {"name": "Family", "type": "singleLineText"},
+    ]},
+    {"name": "Parts", "fields": [
+        {"name": "part_number", "type": "singleLineText"},
+        {"name": "name",        "type": "singleLineText"},
+        {"name": "category",    "type": "singleLineText"},
+        {"name": "active",      "type": "checkbox", "options": {"color": "greenBright", "icon": "check"}},
+    ]},
+    {"name": "BOM", "fields": [
+        {"name": "parent",      "type": "singleLineText"},
+        {"name": "quantity",    "type": "number", "options": {"precision": 0}},
+        {"name": "level",       "type": "number", "options": {"precision": 0}},
+        {"name": "notes",       "type": "singleLineText"},
+    ]},
+]
+
+
+def setup_airtable() -> None:
+    """Create any missing Airtable tables. Safe to run on every startup."""
+    url     = f"https://api.airtable.com/v0/meta/bases/{AIRTABLE_BASE_ID}/tables"
+    r       = requests.get(url, headers=AIRTABLE_HEADERS)
+    if not r.ok:
+        print(f"  ⚠  Could not read Airtable schema: {r.status_code} — skipping table setup.")
+        return
+
+    existing = {t["name"] for t in r.json().get("tables", [])}
+    created  = []
+
+    for table in _AIRTABLE_SCHEMA:
+        if table["name"] in existing:
+            continue
+        resp = requests.post(url, headers=AIRTABLE_HEADERS, json=table)
+        if resp.ok:
+            created.append(table["name"])
+        else:
+            print(f"  ⚠  Could not create table '{table['name']}': {resp.text[:120]}")
+
+    if created:
+        print(f"  ✓ Airtable tables created: {', '.join(created)}")
+
+
 def _check_config() -> None:
     """Fail fast with a clear message if required keys are missing."""
     required = {
@@ -1682,6 +1741,7 @@ Enter one per line. Press Enter on an empty line when done.
 
 if __name__ == "__main__":
     _check_config()
+    setup_airtable()
     last_bom = _load_last_bom()
 
     if last_bom:
