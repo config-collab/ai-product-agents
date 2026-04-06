@@ -196,7 +196,10 @@ def call_claude(prompt: str, system: str = "",
     cache_system=True marks the system prompt for Anthropic prompt caching
     (ephemeral, 5-minute TTL). Use for agents called repeatedly in a loop
     (evaluator, optimizer) to pay ~10% of input cost on cache hits.
+
+    Retries automatically on 529 overload errors with exponential backoff.
     """
+    import time as _time
     kwargs = dict(
         model      = model,
         max_tokens = max_tokens,
@@ -209,14 +212,22 @@ def call_claude(prompt: str, system: str = "",
         else:
             kwargs["system"] = system
 
-    response = claude.messages.create(**kwargs)
-
-    for block in response.content:
-        if block.type == "text":
-            return block.text
-
-    print(f"  ⚠ No text block. Block types: {[b.type for b in response.content]}")
-    return ""
+    for attempt in range(5):
+        try:
+            response = claude.messages.create(**kwargs)
+            for block in response.content:
+                if block.type == "text":
+                    return block.text
+            print(f"  ⚠ No text block. Block types: {[b.type for b in response.content]}")
+            return ""
+        except Exception as e:
+            if "overloaded" in str(e).lower() or "529" in str(e):
+                wait = 15 * (2 ** attempt)   # 15s, 30s, 60s, 120s, 240s
+                print(f"  ⚠ API overloaded — waiting {wait}s before retry ({attempt+1}/5)...")
+                _time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("Claude API still overloaded after 5 retries — try again later.")
 
 
 def _clean_json_text(text: str) -> str:
