@@ -2086,7 +2086,7 @@ Examples:
     return idea
 
 
-def ask_intent(family: dict) -> Intent:
+def ask_intent(family: dict, competitors: list | None = None) -> Intent:
     """Ask for design intent, informed by the product family definition."""
     f        = family.get("family", {})
     dims     = family.get("scoring_dimensions", [])
@@ -2117,22 +2117,35 @@ def ask_intent(family: dict) -> Intent:
 
         if pick == "0":
             # Claude reads the family and recommends the best intent
-            print("\n  Analysing product family to recommend best intent...")
+            print("\n  Analysing product family and market landscape to recommend best intent...")
+            comp_block = ""
+            if competitors:
+                lines = []
+                for c in competitors:
+                    price = f"€{c.get('price_eur', 0):,}" if c.get("price_eur") else "price unknown"
+                    highlights = "; ".join(c.get("highlights", []))
+                    lines.append(f"  - {c.get('maker')} {c.get('name')} [{price}]: {highlights}. "
+                                 f"Weakness: {c.get('weakness','')}. Position: {c.get('positioning','')}")
+                comp_block = "\n\nCurrent market competitors:\n" + "\n".join(lines) + (
+                    "\n\nUse this to recommend an intent that targets a real gap or "
+                    "meaningful differentiation — not just copying the market leader.")
+
             auto_prompt = f"""
 You are a product strategist. Given this product family, recommend the single most
-compelling and balanced design intent — the one that would create the best product
-for the broadest real-world use case.
+compelling design intent — one that creates a differentiated, competitive product
+rather than a me-too copy of what already exists.
 
 Product family:
 {json.dumps({"family": family.get("family"), "features": family.get("features"),
              "options": family.get("options"), "constraints": family.get("constraints"),
              "variants": family.get("variants"), "scoring_dimensions": family.get("scoring_dimensions")}, indent=2)}
+{comp_block}
 
 Return a JSON object:
 {{
-  "goal": "concise goal statement, e.g. 'maximum range with balanced cost'",
+  "goal": "concise goal statement, e.g. 'maximum range at under-market price'",
   "constraints": ["hard constraint 1", "hard constraint 2"],
-  "reasoning": "one sentence explaining why this is the best starting point"
+  "reasoning": "one sentence explaining what market gap this targets and why"
 }}
 
 Output JSON only.
@@ -2245,5 +2258,5 @@ if __name__ == "__main__":
         product_idea = args.idea or ask_product_idea()
         family       = product_family_agent(product_idea)
         competitors  = competitive_agent(product_idea, family)
-        intent       = ask_intent(family)
+        intent       = ask_intent(family, competitors=competitors)
         orchestrator(intent, family, competitors=competitors)
