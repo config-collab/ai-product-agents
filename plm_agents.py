@@ -460,6 +460,80 @@ Rules:
 
 
 # ─────────────────────────────────────────────────────────────
+# AGENT 0b – COMPETITIVE ANALYSIS
+# ─────────────────────────────────────────────────────────────
+
+def competitive_agent(product_idea: str, family: dict) -> list[dict]:
+    """
+    Identify real market competitors and their key specs.
+
+    Returns a list of dicts:
+    [
+      {
+        "name":        "Specialized Turbo Levo",
+        "maker":       "Specialized",
+        "price_eur":   4500,
+        "highlights":  ["Brose S Mag motor", "700Wh battery", "150mm travel"],
+        "weakness":    "heavy at 23 kg",
+        "positioning": "premium trail e-MTB"
+      },
+      ...
+    ]
+    """
+    separator("COMPETITIVE ANALYSIS AGENT")
+    dims  = [d["name"] for d in family.get("scoring_dimensions", [])]
+    feats = [f["name"] for f in family.get("features", [])]
+
+    prompt = f"""
+You are a product market analyst. Identify 4-5 real, well-known competitors
+for the following product and return structured data about each.
+
+Product idea   : {product_idea}
+Key dimensions : {dims}
+Key features   : {feats}
+
+Return JSON — an array of objects, one per competitor:
+
+[
+  {{
+    "name":        "full product name",
+    "maker":       "brand / manufacturer",
+    "price_eur":   approximate price in EUR as an integer (0 if unknown),
+    "highlights":  ["3-4 specific standout specs or features"],
+    "weakness":    "one clear weakness or trade-off",
+    "positioning": "one-line market position"
+  }}
+]
+
+Rules:
+- Use real, currently available products — not invented.
+- Highlights should be specific (e.g. "250W motor, 80Nm torque") not vague ("good motor").
+- Cover a spread of price tiers if relevant.
+- If the product category is niche or emerging, name the closest available alternatives.
+- Output JSON array only, no markdown.
+""".strip()
+
+    raw = call_claude(prompt, system="You are a precise product market analyst. Output JSON only.",
+                      max_tokens=1500)
+    try:
+        competitors = extract_json(raw)
+        if not isinstance(competitors, list):
+            competitors = []
+    except Exception:
+        competitors = []
+
+    if competitors:
+        print(f"\n  ✓ Found {len(competitors)} competitors:")
+        for c in competitors:
+            price = f"€{c.get('price_eur', 0):,}" if c.get("price_eur") else "price n/a"
+            print(f"    • {c.get('maker')} {c.get('name')}  [{price}]  — {c.get('positioning','')}")
+    else:
+        print("  ⚠ No competitor data returned — continuing without.")
+
+    return competitors
+
+
+# ─────────────────────────────────────────────────────────────
 # AGENT 1 – CONFIGURATOR
 # ─────────────────────────────────────────────────────────────
 
@@ -1537,7 +1611,7 @@ def cad_agent(bom: list, family: dict | None = None) -> dict:
 # ORCHESTRATOR
 # ─────────────────────────────────────────────────────────────
 
-def orchestrator(intent: Intent, family: dict) -> dict:
+def orchestrator(intent: Intent, family: dict, competitors: list | None = None) -> dict:
     """
     Engineering loop (family already defined before calling):
       1. Configure (once, guided by family)
@@ -1654,6 +1728,7 @@ def orchestrator(intent: Intent, family: dict) -> dict:
     outcome = {
         "intent":        intent,
         "family":        family,
+        "competitors":   competitors or [],
         "final_config":  config,
         "evaluation":    last_eval,
         "score_history": score_history,
@@ -1707,6 +1782,7 @@ def _save_html_report(outcome: dict) -> None:
 
     intent        = outcome["intent"]
     family        = outcome["family"]
+    competitors   = outcome.get("competitors", [])
     config        = outcome["final_config"]
     evaluation    = outcome["evaluation"]
     score_history = outcome.get("score_history", [])
@@ -1778,6 +1854,28 @@ def _save_html_report(outcome: dict) -> None:
         cfg_preview = ", ".join(f"{k}={val}" for k, val in list(v.get("configuration", {}).items())[:4])
         variant_html += (f"<div class='variant'><strong>{v['name']}</strong>"
                          f" — {v.get('description','')} <br><small>{cfg_preview}</small></div>")
+
+    # ── Competitor table ──────────────────────────────────────
+    competitor_html = ""
+    if competitors:
+        rows = ""
+        for c in competitors:
+            price = f"€{c.get('price_eur', 0):,}" if c.get("price_eur") else "—"
+            highlights = "; ".join(c.get("highlights", []))
+            rows += (f"<tr><td><strong>{c.get('maker','')}</strong><br>"
+                     f"<small style='color:#64748b'>{c.get('name','')}</small></td>"
+                     f"<td>{price}</td>"
+                     f"<td>{highlights}</td>"
+                     f"<td style='color:#ef4444'>{c.get('weakness','')}</td>"
+                     f"<td style='color:#64748b;font-style:italic'>{c.get('positioning','')}</td></tr>")
+        competitor_html = f"""
+  <div class="section full">
+    <h2>Competitive Landscape ({len(competitors)} products)</h2>
+    <table>
+      <tr><th>Product</th><th>Price</th><th>Key Specs</th><th>Weakness</th><th>Positioning</th></tr>
+      {rows}
+    </table>
+  </div>"""
 
     # ── Image embed ───────────────────────────────────────────
     img_html = ""
@@ -1884,6 +1982,8 @@ def _save_html_report(outcome: dict) -> None:
     </table>
     <button class="btn" onclick="downloadCSV()">Export BOM as CSV</button>
   </div>
+
+  {competitor_html}
 
   {img_html}
 
@@ -2144,5 +2244,6 @@ if __name__ == "__main__":
     else:
         product_idea = args.idea or ask_product_idea()
         family       = product_family_agent(product_idea)
+        competitors  = competitive_agent(product_idea, family)
         intent       = ask_intent(family)
-        orchestrator(intent, family)
+        orchestrator(intent, family, competitors=competitors)
