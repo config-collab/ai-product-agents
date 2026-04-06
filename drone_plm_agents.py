@@ -794,10 +794,10 @@ def call_claude_thinking(prompt: str, system: str = "",
 
 # ── Phase 1: Plan (Opus thinking → MCP tool steps) ───────────
 
-def _cad_plan(bom: list) -> dict:
+def _cad_plan(bom: list, family: dict | None = None) -> dict:
     """
-    Opus thinks through the BOM and plans a realistic parametric drone model
-    using the full onshape-mcp builder vocabulary.
+    Opus thinks through the BOM and plans a realistic parametric model
+    using the onshape-mcp builder vocabulary. Works for any product type.
     """
     separator("CAD AGENT  Phase 1 — Plan")
 
@@ -807,128 +807,97 @@ def _cad_plan(bom: list) -> dict:
         for p in bom
     ]
 
-    prompt = f"""
-You are an expert parametric CAD engineer building a realistic drone in Onshape.
-ALL measurements must be in INCHES. 1 inch = 25.4 mm.
+    product_type = (family or {}).get("family", {}).get("product_type", "product")
+    product_name = (family or {}).get("family", {}).get("name", "Product")
+    constraints  = (family or {}).get("constraints", [])
+    con_block    = ("\n".join(f"  - {c}" for c in constraints)
+                    if constraints else "  (none)")
 
+    prompt = f"""
+You are an expert parametric CAD engineer. Build a realistic, complete 3D model
+of a {product_type} in Onshape using the tools below.
+ALL measurements must be in INCHES (1 inch = 25.4 mm).
+
+Product: {product_name}
 BOM to model:
 {json.dumps(bom_summary)}
+
+Product constraints:
+{con_block}
 
 ═══ AVAILABLE TOOLS ═══
 
 set_variable
-  {{"tool":"set_variable","name":"hub_w","expression":"2.0 in","description":"centre hub width"}}
+  {{"tool":"set_variable","name":"body_len","expression":"12.0 in","description":"main body length"}}
 
-rect_sketch   — one or more rectangles on one sketch (all rects share the sketch + extrude)
-  {{"tool":"rect_sketch","ref":"hub_sk","name":"Hub Plate","plane":"Top","corner1":[-1,-1],"corner2":[1,1]}}
+rect_sketch   — rectangle on a plane
+  {{"tool":"rect_sketch","ref":"body_sk","name":"Body","plane":"Top","corner1":[-1,-2],"corner2":[1,2]}}
 
-circle_sketch — one or more circles on one sketch
-  {{"tool":"circle_sketch","ref":"motor_sk","name":"Motor Mount","plane":"Top","centerX":0,"centerY":3.5,"radius":0.35}}
+circle_sketch — circle on a plane
+  {{"tool":"circle_sketch","ref":"wheel_sk","name":"Wheel","plane":"Front","centerX":0,"centerY":0,"radius":1.0}}
 
-polygon_sketch — regular polygon (use for hex standoff pads)
-  {{"tool":"polygon_sketch","ref":"pad_sk","name":"Standoff Pad","plane":"Top","centerX":0,"centerY":0,"sides":6,"radius":0.2}}
+polygon_sketch — regular polygon
+  {{"tool":"polygon_sketch","ref":"hub_sk","name":"Hub","plane":"Top","centerX":0,"centerY":0,"sides":6,"radius":0.5}}
 
-line_polygon   — arbitrary closed polygon (use for TAPERED ARMS — wider at hub, narrower at tip)
-  {{"tool":"line_polygon","ref":"arm_sk","name":"NE Arm","plane":"Top",
-    "vertices":[[0.3,0.3],[0.15,3.5],[-0.15,3.5],[-0.3,0.3]]}}
+line_polygon   — arbitrary closed polygon (min 3 [x,y] vertices)
+  {{"tool":"line_polygon","ref":"bracket_sk","name":"Bracket","plane":"Front","vertices":[[0,0],[1,0],[0.5,1]]}}
 
 extrude
-  {{"tool":"extrude","ref":"hub_body","name":"Hub","sketch_ref":"hub_sk","depth":0.098,"variableDepth":"frame_t","operationType":"NEW"}}
-  operationType: "NEW" (first solid) | "ADD" (merge into existing) | "REMOVE" (cut)
+  {{"tool":"extrude","ref":"body","name":"Body","sketch_ref":"body_sk","depth":0.5,"operationType":"NEW"}}
+  operationType: "NEW" | "ADD" (merge) | "REMOVE" (cut)
 
-revolve        — revolve a profile sketch around an axis (use for motor bell / propeller hub)
-  {{"tool":"revolve","ref":"bell_body","name":"Motor Bell","sketch_ref":"bell_profile_sk","axis":"Y","angle":360,"operationType":"NEW"}}
+revolve        — revolve profile around axis
+  {{"tool":"revolve","ref":"shaft","name":"Shaft","sketch_ref":"shaft_sk","axis":"Y","angle":360,"operationType":"NEW"}}
 
-circular_pattern — repeat a feature N times around Z axis (use for 4 arms OR 4 motor mounts)
-  {{"tool":"circular_pattern","ref":"motors_pat","name":"4 Motor Mounts","feature_ref":"motor_extrude","count":4,"axis":"Z"}}
-  feature_ref must be the "ref" of a preceding extrude or revolve step.
+circular_pattern — repeat feature N times around Z axis
+  {{"tool":"circular_pattern","ref":"spokes_pat","name":"Spokes","feature_ref":"spoke_extrude","count":8,"axis":"Z"}}
+  feature_ref must be the "ref" of a preceding extrude or revolve.
 
-═══ FULL DRONE GEOMETRY GUIDE ═══
+═══ MODELLING GUIDE ═══
 
-Model a COMPLETE, realistic drone — every BOM component gets geometry.
-Use X-config (arms at 45° diagonals). Origin = centre of frame, Z = up.
+Think carefully about what this product physically looks like.
+Map each BOM item to appropriate geometry. Use these principles:
 
-── STEP 1: VARIABLES (~12-14) ──────────────────────────────────
-Define all sizing variables first:
-  hub_w (hub half-width ~1.5 in), hub_h (hub half-height ~1.5 in),
-  frame_t (carbon plate thickness ~0.098 in),
-  arm_len (hub edge to motor centre ~3.5 in),
-  arm_w_root (arm width at hub ~0.6 in), arm_w_tip (~0.28 in),
-  motor_r (motor outer radius ~0.37 in),
-  motor_h (motor height above frame ~0.55 in),
-  prop_r (propeller disc radius ~2.52 in),
-  prop_t (propeller disc thickness ~0.02 in),
-  prop_blade_l (blade length for one blade ~2.3 in),
-  stack_w (FC/ESC board half-width ~0.59 in),
-  batt_w (battery width ~1.4 in), batt_l (battery length ~3.1 in), batt_h (battery height ~0.78 in),
-  cam_w (camera width ~0.63 in), cam_h (camera height ~0.55 in)
+1. VARIABLES FIRST — define key dimensions as set_variable steps before any geometry.
+   Name them clearly (e.g. body_len, wheel_r, wall_t). 8–14 variables is typical.
 
-── STEP 2: FRAME ───────────────────────────────────────────────
-a. Hub plate — rect_sketch centred at origin → extrude NEW (frame_t thick)
-b. ONE tapered arm — line_polygon trapezoid (wider at hub, narrower at tip),
-   placed along NE diagonal → extrude ADD onto hub
-c. circular_pattern the arm ×4 around Z to get all 4 arms
-d. Lightening holes — 4 circle_sketches inside hub → extrude REMOVE
-e. Battery channel cut — rect_sketch on top of hub → extrude REMOVE (shallow slot)
+2. STRUCTURE — start with the main structural body/frame/chassis as the foundation
+   (operationType NEW). Build all other parts relative to it.
 
-── STEP 3: MOTORS (×4) ────────────────────────────────────────
-ONE motor at the NE arm tip:
-a. Motor stator base — circle_sketch at arm tip → extrude NEW (short cylinder, ~0.2 in tall)
-b. Motor bell — line_polygon profile on Front plane showing the classic
-   bell-cup silhouette (wider at top, flared rim) → revolve 360° around Y.
-   Position this at the motor centre, elevated above the stator.
-c. circular_pattern both motor features ×4 around Z
+3. EACH BOM COMPONENT → GEOMETRY — for every part in the BOM, create at least one
+   sketch + extrude/revolve that represents it visually. Group repeated parts using
+   circular_pattern where appropriate (wheels, bolts, symmetrical features).
 
-── STEP 4: PROPELLERS (×4) ────────────────────────────────────
-ONE propeller assembly at NE arm tip, elevated above motor:
-a. Hub disc — circle_sketch (small, ~0.2 in radius) → extrude NEW (thin)
-b. ONE blade — line_polygon (elongated teardrop / paddle shape, 2 blades per prop)
-   → extrude NEW (very thin, ~0.015 in)
-c. circular_pattern the blade ×2 (for a 2-blade prop)
-d. circular_pattern the entire prop assembly ×4 around Z
+4. REALISTIC PROPORTIONS — use real-world scale. Think about how the product would
+   actually look assembled. Position components in their correct spatial relationship.
 
-── STEP 5: ELECTRONICS STACK (centre hub, Z-stacked) ─────────
-Stack layers from bottom to top at Z = frame_t:
-a. ESC board — rect_sketch (square, ~1.18 in) → extrude NEW (~0.04 in thick)
-b. Flight controller — rect_sketch (same footprint, slightly smaller) → extrude NEW
-   (offset upward ~0.2 in by placing sketch higher on Front plane — use Right plane
-   for the stack height profile OR just use sequential extrude heights)
-   SIMPLIFICATION: model ESC and FC as two stacked rect boxes offset in Z.
-   Use corner1/corner2 on the Top plane for XY, and offset depth to stack.
+5. PLANES:
+   - Top    = XY plane (footprint / top-down view)
+   - Front  = XZ plane (front face / profile view)
+   - Right  = YZ plane (side view)
 
-── STEP 6: BATTERY ────────────────────────────────────────────
-Battery sits on TOP of the hub plate, centred:
-rect_sketch (batt_w × batt_l) on Top plane → extrude NEW upward (batt_h tall)
-
-── STEP 7: CAMERA ─────────────────────────────────────────────
-Camera at the FRONT of the hub, slightly elevated, tilted forward:
-line_polygon (wedge/box profile, cam_w × cam_h) on Front plane → extrude
-(cam body depth ~0.55 in). Place at Y = hub_h + 0.1 in, Z = frame_t + 0.15 in.
-
-── STEP 8: VTX (video transmitter) ────────────────────────────
-Small box behind/above the FC stack:
-rect_sketch (~0.6 × 0.6 in) → extrude NEW (~0.3 in tall)
+6. OPERATIONTYPES:
+   - NEW    = first body of a new separate part
+   - ADD    = merge into an existing body (structural connections)
+   - REMOVE = cut/subtract (holes, slots, pockets)
 
 ═══ RULES ═══
-- Max {CAD_MAX_STEPS} total steps — prioritise frame + motors + props + battery;
-  skip VTX if running out of steps.
-- All set_variable steps FIRST, before any geometry.
-- sketch_ref / feature_ref must match the "ref" of a PRECEDING step exactly.
-- extrude depth = plain number in inches. variableDepth must match a set_variable name.
-- All XY coordinates in inches from model origin. Z handled by extrude depth stacking.
-- operationType: "NEW" for first body of each new part; "ADD" to merge into frame;
-  "REMOVE" to cut holes.
+- Max {CAD_MAX_STEPS} total steps. Prioritise the most visually important components.
+- All set_variable steps MUST come before any geometry step.
+- sketch_ref must match the "ref" of a preceding sketch step exactly.
+- feature_ref in circular_pattern must match the "ref" of a preceding extrude/revolve.
+- extrude depth = plain positive number (inches). No units string in depth field.
+- All XY coordinates in inches from model origin.
 - Output JSON only.
 
 Output:
 {{"steps":[...]}}
 """.strip()
 
-    # ── Step A: Opus thinks through the geometry (reasoning only) ─
-    print("\n  Opus is reasoning through full drone geometry...")
+    print(f"\n  Opus is reasoning through {product_type} geometry...")
     thinking, raw = call_claude_thinking(
         prompt,
-        system="You are an expert parametric CAD engineer building a complete, realistic drone. Think carefully about every component's geometry, position, proportions, and inch units. Output JSON only.",
+        system=f"You are an expert parametric CAD engineer building a complete, realistic {product_type}. Think carefully about every component's geometry, position, and proportions in inches. Output JSON only.",
         model=CLAUDE_MODEL,
         max_tokens=12000,
     )
@@ -941,29 +910,27 @@ Output:
             print(f"    ... ({len(lines) - 14} more lines)")
         print("  └─")
 
-    # ── Step B: if reply is empty, generate JSON from the reasoning ─
     if not raw.strip():
         print("\n  Thinking complete. Generating JSON step list from reasoning...")
-        # Condense thinking to key decisions (first 200 lines)
         thinking_summary = "\n".join(
             [l.strip() for l in thinking.splitlines() if l.strip()][:200]
         ) if thinking else "No thinking available."
 
         gen_prompt = f"""
-You are a parametric CAD engineer. You have already reasoned through a complete
-drone geometry plan. Now output ONLY the JSON step list based on your reasoning.
+You are a parametric CAD engineer. You have reasoned through a complete {product_type}
+geometry plan. Now output ONLY the JSON step list based on your reasoning.
 
 Your reasoning summary:
 {thinking_summary}
 
 Available tools and their JSON format:
-set_variable: {{"tool":"set_variable","name":"x","expression":"1.0 in"}}
-rect_sketch:  {{"tool":"rect_sketch","ref":"id","name":"Label","plane":"Top","corner1":[x,y],"corner2":[x,y]}}
-circle_sketch:{{"tool":"circle_sketch","ref":"id","name":"Label","plane":"Top","centerX":0,"centerY":0,"radius":1.0}}
-line_polygon: {{"tool":"line_polygon","ref":"id","name":"Label","plane":"Top","vertices":[[x,y],...]}}
-polygon_sketch:{{"tool":"polygon_sketch","ref":"id","name":"Label","plane":"Top","centerX":0,"centerY":0,"sides":6,"radius":0.2}}
-extrude:      {{"tool":"extrude","ref":"id","name":"Label","sketch_ref":"sketch_ref","depth":0.1,"operationType":"NEW"|"ADD"|"REMOVE"}}
-revolve:      {{"tool":"revolve","ref":"id","name":"Label","sketch_ref":"sketch_ref","axis":"Y","angle":360,"operationType":"NEW"}}
+set_variable:    {{"tool":"set_variable","name":"x","expression":"1.0 in"}}
+rect_sketch:     {{"tool":"rect_sketch","ref":"id","name":"Label","plane":"Top","corner1":[x,y],"corner2":[x,y]}}
+circle_sketch:   {{"tool":"circle_sketch","ref":"id","name":"Label","plane":"Top","centerX":0,"centerY":0,"radius":1.0}}
+line_polygon:    {{"tool":"line_polygon","ref":"id","name":"Label","plane":"Top","vertices":[[x,y],...]}}
+polygon_sketch:  {{"tool":"polygon_sketch","ref":"id","name":"Label","plane":"Top","centerX":0,"centerY":0,"sides":6,"radius":0.2}}
+extrude:         {{"tool":"extrude","ref":"id","name":"Label","sketch_ref":"sketch_ref","depth":0.1,"operationType":"NEW"|"ADD"|"REMOVE"}}
+revolve:         {{"tool":"revolve","ref":"id","name":"Label","sketch_ref":"sketch_ref","axis":"Y","angle":360,"operationType":"NEW"}}
 circular_pattern:{{"tool":"circular_pattern","ref":"id","name":"Label","feature_ref":"feature_ref","count":4,"axis":"Z"}}
 
 Output ONLY: {{"steps":[...]}}
@@ -1330,12 +1297,13 @@ def _execute_plan(plan: dict) -> list[dict]:
     return _asyncio.run(_execute_async(plan))
 
 
-def cad_agent(bom: list) -> dict:
+def cad_agent(bom: list, family: dict | None = None) -> dict:
     """Full CAD pipeline: BOM → Claude plan → onshape-mcp → Onshape."""
-    separator("CAD AGENT  →  Onshape (via onshape-mcp)")
+    product_type = (family or {}).get("family", {}).get("product_type", "product")
+    separator(f"CAD AGENT  →  Onshape  [{product_type}]")
     print(f"  BOM input: {len(bom)} parts")
 
-    plan    = _cad_plan(bom)           # Phase 1  — Opus thinks, generates step list
+    plan    = _cad_plan(bom, family)    # Phase 1  — Opus thinks, generates step list
     plan    = _cad_verify_and_fix(plan) # Phase 1b — Opus self-checks & fixes in a loop
     results = _execute_plan(plan)       # Phase 2  — execute step-by-step via MCP builders
 
@@ -1430,7 +1398,7 @@ def orchestrator(intent: Intent, family: dict) -> dict:
     print(f"\n  BOM saved. {len(best_bom)} parts ready for CAD.")
     run_cad = input("  Run CAD agent to generate Onshape model? [y/N]: ").strip().lower()
     if run_cad == "y":
-        cad_result = cad_agent(best_bom)
+        cad_result = cad_agent(best_bom, family=family)
         print(f"\n  → CAD model generated via Onshape MCP")
     else:
         cad_result = {"status": "skipped by user", "cad_steps": [], "results": []}
@@ -1595,7 +1563,8 @@ if __name__ == "__main__":
 
     if choice == "2" and last_bom:
         separator("CAD ONLY — using last design")
-        cad_agent(last_bom)
+        # No family available when jumping straight to CAD — Claude infers product type from BOM
+        cad_agent(last_bom, family=None)
     else:
         product_idea = ask_product_idea()
         family       = product_family_agent(product_idea)

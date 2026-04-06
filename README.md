@@ -84,8 +84,8 @@ Scores the configuration against the product-specific dimensions (e.g. `range_km
 ### PLM Agent
 Writes all parts and BOM entries to Airtable in batched requests.
 
-### CAD Agent _(drone-specific)_
-Generates a parametric drone model in Onshape using the onshape-mcp library. Prompted after PLM — you choose whether to run it.
+### CAD Agent _(optional)_
+Generates a parametric 3D model in Onshape using the onshape-mcp library. The product type and BOM drive the geometry — Claude reasons about what the product looks like and maps each BOM component to sketches, extrudes, revolves, and patterns. Prompted after PLM — you choose whether to run it.
 
 ---
 
@@ -100,7 +100,7 @@ Generates a parametric drone model in Onshape using the onshape-mcp library. Pro
 
 ## Notes
 
-- **Product-agnostic** except for CAD — evaluator/optimizer dimensions come from the product family, not hardcoded logic.
+- **Fully product-agnostic** — the family defines scoring dimensions, the CAD agent infers geometry from the product type and BOM.
 - **Last design cached** in `.last_bom.json` (gitignored) — next run offers to skip straight to CAD.
 - **Prompt caching** on evaluator/optimizer system prompts cuts API cost in long optimization loops.
 
