@@ -38,6 +38,7 @@ import requests
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 AIRTABLE_TOKEN    = os.getenv("AIRTABLE_TOKEN",    "")
 AIRTABLE_BASE_ID  = os.getenv("AIRTABLE_BASE_ID",  "")
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY",    "")
 
 CLAUDE_MODEL       = "claude-opus-4-6"          # CAD reasoning (adaptive thinking)
 CLAUDE_MODEL_MID   = "claude-sonnet-4-6"        # config / eval / optimize
@@ -110,6 +111,9 @@ def _check_config() -> None:
     missing_os = [k for k, v in onshape.items() if not v]
     if missing_os:
         print(f"  ⚠  Onshape keys not set ({', '.join(missing_os)}) — CAD agent will be unavailable.")
+
+    if not OPENAI_API_KEY:
+        print(f"  ⚠  OPENAI_API_KEY not set — image generation will be unavailable.")
 
 
 claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -703,7 +707,98 @@ def plm_agent(bom: list, parent_name: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# AGENT 5 – CAD AGENT
+# AGENT 5 – IMAGE AGENT  (DALL-E 3 product render)
+# ─────────────────────────────────────────────────────────────
+
+def image_agent(bom: list, family: dict, intent: Intent) -> dict:
+    """
+    Generate a product render via DALL-E 3.
+    1. Claude writes a detailed image prompt from the family + BOM + intent.
+    2. DALL-E 3 generates a 1792×1024 render.
+    3. Image is downloaded and saved as render_<timestamp>.png.
+    """
+    import base64 as _b64
+    import time as _time
+
+    separator("IMAGE AGENT  →  DALL-E 3")
+
+    if not OPENAI_API_KEY:
+        print("  ✗ OPENAI_API_KEY not set — skipping image generation.")
+        return {"status": "skipped — no OpenAI key", "file": None}
+
+    product_name = family.get("family", {}).get("name", "product")
+    product_type = family.get("family", {}).get("product_type", "product")
+    parts        = [p.get("name", "") for p in bom if p.get("name")]
+    variants     = [v["name"] for v in family.get("variants", [])]
+
+    # ── Step 1: Claude writes the image prompt ────────────────
+    print("  Generating render prompt...")
+    prompt_request = f"""
+Write a detailed DALL-E 3 image prompt for a professional product render of this item.
+
+Product     : {product_name} ({product_type})
+Goal        : {intent.goal}
+Constraints : {', '.join(intent.constraints) if intent.constraints else 'none'}
+Key parts   : {', '.join(parts[:12])}
+Variants    : {', '.join(variants)}
+
+Rules:
+- Describe the product as a real, physical object with realistic materials and finish.
+- Specify a clean studio background (white, light grey, or gradient).
+- Use product photography language: "studio lighting", "soft shadows", "high detail", "8K render".
+- Mention the most important physical features based on the parts list.
+- Keep it under 200 words.
+- Output the prompt text only — no explanation, no quotes around it.
+""".strip()
+
+    image_prompt = call_claude(prompt_request,
+                               system="You write precise, vivid DALL-E 3 image prompts for product renders.",
+                               max_tokens=300)
+    print(f"\n  Prompt: {image_prompt[:120]}...")
+
+    # ── Step 2: Call DALL-E 3 ─────────────────────────────────
+    print("\n  Calling DALL-E 3...")
+    r = requests.post(
+        "https://api.openai.com/v1/images/generations",
+        headers={"Authorization": f"Bearer {OPENAI_API_KEY}",
+                 "Content-Type": "application/json"},
+        json={
+            "model":   "dall-e-3",
+            "prompt":  image_prompt,
+            "size":    "1792x1024",
+            "quality": "hd",
+            "n":       1,
+        },
+        timeout=60,
+    )
+
+    if not r.ok:
+        print(f"  ✗ DALL-E 3 error [{r.status_code}]: {r.text[:200]}")
+        return {"status": f"error {r.status_code}", "file": None}
+
+    image_url = r.json()["data"][0]["url"]
+
+    # ── Step 3: Download and save ─────────────────────────────
+    img_data  = requests.get(image_url, timeout=30).content
+    timestamp = _time.strftime("%Y%m%d_%H%M%S")
+    filename  = os.path.join(os.path.dirname(__file__), f"render_{timestamp}.png")
+    with open(filename, "wb") as f:
+        f.write(img_data)
+
+    print(f"  ✓ Saved → {filename}")
+
+    # Try to open it in the default image viewer
+    try:
+        import subprocess
+        subprocess.Popen(["explorer", filename])
+    except Exception:
+        pass
+
+    return {"status": "ok", "file": filename, "prompt": image_prompt}
+
+
+# ─────────────────────────────────────────────────────────────
+# AGENT 6 – CAD AGENT
 # Pipeline: BOM → Claude plan → onshape-mcp builders → Onshape
 # ─────────────────────────────────────────────────────────────
 
@@ -1394,31 +1489,44 @@ def orchestrator(intent: Intent, family: dict) -> dict:
     assembly_name = f"AI-{product_type}: {intent.goal[:50]}"
     plm_result    = plm_agent(best_bom, parent_name=assembly_name)
 
-    # Step 4 — optionally run CAD
-    print(f"\n  BOM saved. {len(best_bom)} parts ready for CAD.")
-    run_cad = input("  Run CAD agent to generate Onshape model? [y/N]: ").strip().lower()
-    if run_cad == "y":
+    # Step 4 — visualise / build
+    print(f"\n  BOM ready. {len(best_bom)} parts configured.")
+    print("""
+  What would you like to do next?
+    1  Generate 3D model in Onshape
+    2  Generate product image  (DALL-E 3)
+    3  Skip
+""")
+    vis_choice = input("  Choose [1/2/3]: ").strip()
+
+    image_result = {"status": "skipped", "file": None}
+    cad_result   = {"status": "skipped", "cad_steps": [], "results": []}
+
+    if vis_choice == "1":
         cad_result = cad_agent(best_bom, family=family)
-        print(f"\n  → CAD model generated via Onshape MCP")
+    elif vis_choice == "2":
+        image_result = image_agent(best_bom, family, intent)
     else:
-        cad_result = {"status": "skipped by user", "cad_steps": [], "results": []}
-        print(f"  → CAD skipped.")
+        print("  → Visualisation skipped.")
 
     # Step 5 — final report
     separator("FINAL REPORT")
     s = last_eval.get("scores", {})
-    remaining = [i["text"] for i in last_eval.get("issues", []) if i.get("type") == "critical"]
+    remaining   = [i["text"] for i in last_eval.get("issues", []) if i.get("type") == "critical"]
     family_name = family.get("family", {}).get("name", "n/a")
     variants    = [v["name"] for v in family.get("variants", [])]
+    scores_str  = " | ".join(f"{k}={v}/10" for k, v in s.items()) if s else "n/a"
+    image_line  = image_result["file"] if image_result.get("file") else image_result.get("status", "skipped")
     print(f"""
   Goal        : {intent.goal}
   Constraints : {intent.constraints}
   Family      : {family_name}  ({', '.join(variants)})
   Final BOM   : {len(best_bom)} parts
-  Scores      : flight_time={s.get('flight_time')}/10 | performance={s.get('performance')}/10 | cost={s.get('cost')}/10
+  Scores      : {scores_str}
   Critical    : {remaining if remaining else 'none'}
   Airtable    : {plm_result['parts_created']} parts + {plm_result['bom_created']} BOM entries written
   CAD         : {cad_result['status']}
+  Image       : {image_line}
 """)
 
     return {
@@ -1428,6 +1536,7 @@ def orchestrator(intent: Intent, family: dict) -> dict:
         "evaluation":   last_eval,
         "plm_result":   plm_result,
         "cad_result":   cad_result,
+        "image_result": image_result,
     }
 
 
