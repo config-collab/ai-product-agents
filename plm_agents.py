@@ -2105,6 +2105,7 @@ def ask_intent(family: dict, competitors: list | None = None) -> Intent:
     # ── Variant picker ────────────────────────────────────────
     goal = ""
     constraints_preset: list[str] = []
+    context_preset = ""
     if variants:
         print(f"\nHow do you want to proceed?\n")
         print(f"  0  Auto — let the system recommend the best starting point")
@@ -2145,6 +2146,7 @@ Return a JSON object:
 {{
   "goal": "concise goal statement, e.g. 'maximum range at under-market price'",
   "constraints": ["hard constraint 1", "hard constraint 2"],
+  "context": "use case, target user, environment — e.g. 'residential installer, EU market, garage wall-mount'",
   "reasoning": "one sentence explaining what market gap this targets and why"
 }}
 
@@ -2154,10 +2156,12 @@ Output JSON only.
                                system="You are a product strategist. Output JSON only.",
                                max_tokens=512)
             rec  = extract_json(raw)
-            goal              = rec.get("goal", "")
+            goal               = rec.get("goal", "")
             constraints_preset = rec.get("constraints", [])
+            context_preset     = rec.get("context", "")
             print(f"\n  Recommended goal       : {goal}")
             print(f"  Recommended constraints: {constraints_preset}")
+            print(f"  Recommended context    : {context_preset}")
             print(f"  Reasoning              : {rec.get('reasoning', '')}")
 
         elif pick.isdigit() and 1 <= int(pick) <= len(variants):
@@ -2181,18 +2185,31 @@ Enter one per line. Press Enter on an empty line when done.
 """)
     constraints = list(constraints_preset)
     if constraints:
-        print(f"  (pre-filled from recommendation:)")
+        print(f"  Auto-filled constraints:")
         for c in constraints:
             print(f"    • {c}")
-        print()
-    while True:
-        c = input(f"  Constraint {len(constraints)+1} (or Enter to finish): ").strip()
-        if not c:
-            break
-        constraints.append(c)
+        extra = input("  Add more constraints (or Enter to accept): ").strip()
+        if extra:
+            constraints.append(extra)
+            while True:
+                c = input(f"  Constraint {len(constraints)+1} (or Enter to finish): ").strip()
+                if not c:
+                    break
+                constraints.append(c)
+    else:
+        while True:
+            c = input(f"  Constraint {len(constraints)+1} (or Enter to finish): ").strip()
+            if not c:
+                break
+            constraints.append(c)
 
-    print("\nAny extra context? (use case, environment, user profile, etc.) — Enter to skip.")
-    context = input("  Context: ").strip()
+    if context_preset:
+        print(f"\nContext (auto-filled): {context_preset}")
+        override = input("  Override? (Enter to accept, or type replacement): ").strip()
+        context = override or context_preset
+    else:
+        print("\nAny extra context? (use case, environment, user profile, etc.) — Enter to skip.")
+        context = input("  Context: ").strip()
 
     intent = Intent(goal=goal, constraints=constraints, context=context)
 
