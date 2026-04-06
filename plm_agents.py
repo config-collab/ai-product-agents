@@ -526,9 +526,18 @@ Rules:
 - Output JSON only — no explanation, no markdown outside the JSON.
 """.strip()
 
-    raw    = call_claude(prompt, system="You are a PLM configurator. Output JSON only.",
-                         max_tokens=3000)
-    result = extract_json(raw)
+    system = "You are a PLM configurator. Output JSON only."
+    for attempt in range(1, 3):
+        raw = call_claude(prompt, system=system, max_tokens=3000)
+        try:
+            result = extract_json(raw)
+            break
+        except Exception as e:
+            if attempt == 1:
+                print(f"  ⚠ Configurator JSON parse error — retrying...")
+                prompt += "\n\nIMPORTANT: Output ONLY the JSON object. No prose, no markdown, no trailing text."
+            else:
+                raise RuntimeError(f"Configurator failed to return valid JSON: {e}") from e
     result["_intent"] = intent  # carry intent forward for other agents
     result["_family"] = family  # carry family forward for evaluator/optimizer
 
@@ -598,16 +607,26 @@ Product configuration:
 Output JSON only.
 """.strip()
 
-    raw    = call_claude(prompt, system="You are a product engineering evaluator. Output JSON only.",
-                         max_tokens=1024, cache_system=True)
-    result = extract_json(raw)
+    system = "You are a product engineering evaluator. Output JSON only."
+    for attempt in range(1, 3):
+        raw = call_claude(prompt, system=system, max_tokens=2048, cache_system=True)
+        try:
+            result = extract_json(raw)
+            break
+        except (ValueError, Exception) as e:
+            if attempt == 1:
+                print(f"  ⚠ Evaluator JSON parse error — retrying with stricter prompt...")
+                prompt += "\n\nIMPORTANT: Output ONLY the JSON object. No prose, no markdown, no trailing text."
+            else:
+                print(f"  ⚠ Evaluator failed twice ({e}) — returning empty evaluation.")
+                result = {"scores": {}, "issues": [], "summary": "evaluation failed"}
 
     scores   = result.get("scores", {})
     issues   = result.get("issues", [])
     critical = [i["text"] for i in issues if i.get("type") == "critical"]
     normal   = [i["text"] for i in issues if i.get("type") == "normal"]
 
-    score_str = " | ".join(f"{k}: {v}/10" for k, v in scores.items())
+    score_str = " | ".join(f"{k}: {v}/10" for k, v in scores.items()) or "n/a"
     print(f"\n  Scores  → {score_str}")
     if critical:
         print(f"  Critical: {critical}")
@@ -690,9 +709,18 @@ Rules:
 - Output JSON only.
 """.strip()
 
-    raw    = call_claude(prompt, system="You are a product design optimizer. Output JSON only.",
-                         max_tokens=3000, cache_system=True)
-    result = extract_json(raw)
+    system = "You are a product design optimizer. Output JSON only."
+    for attempt in range(1, 3):
+        raw = call_claude(prompt, system=system, max_tokens=3000, cache_system=True)
+        try:
+            result = extract_json(raw)
+            break
+        except Exception as e:
+            if attempt == 1:
+                print(f"  ⚠ Optimizer JSON parse error — retrying...")
+                prompt += "\n\nIMPORTANT: Output ONLY the JSON object. No prose, no markdown, no trailing text."
+            else:
+                raise RuntimeError(f"Optimizer failed to return valid JSON: {e}") from e
     result["_intent"] = config.get("_intent")  # carry intent forward
     result["_family"] = config.get("_family")  # carry family forward
 
