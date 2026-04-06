@@ -1,82 +1,106 @@
 # AI Product Agents
 
-A multi-agent system that takes a product idea and a design intent, then configures, evaluates, and builds it — automatically.
-
-```
-Your idea  →  "electric mountain bike"
-Your intent →  "maximum range, cost under €2000"
-
-  Product Family Agent     — defines features, options, constraints, variants
-  Competitive Analysis     — finds real market competitors and their specs
-  Configurator Agent       — selects a valid configuration and builds a BOM
-  Evaluator Agent          — scores the design against what matters for this product
-  Optimizer Agent          — fixes issues and improves scores iteratively
-  Builder Agent            — writes the result to Airtable
-  CAD Agent (optional)     — generates a parametric 3D model in Onshape
-  Image Agent (optional)   — renders a product image via DALL-E 3
-```
-
-Works for any product — bikes, robots, cameras, machines, drones, appliances.
+A multi-agent system that takes a product idea and a design intent, then configures, evaluates, and builds it — automatically. Works for any product.
 
 ---
 
 ## How it works
 
-**1. You give it a product idea.**
-Anything: `inspection robot`, `portable solar station`, `espresso machine for cafes`.
-
-**2. The system defines the product family.**
-It creates a structured feature model — features, options per feature, cross-feature constraints, and 2–3 predefined variants. Like a configurator in Configit or pure::variants, but generated from scratch.
-
-**3. Competitive landscape is mapped.**
-4–5 real market competitors are identified with pricing, key specs, weaknesses, and positioning — giving context for where your design should differentiate.
-
-**4. You define your intent.**
-Based on the product family it just built, the system shows you the relevant features and scoring dimensions, then asks:
-- What do you want to optimise for?
-- What are your hard constraints?
-
-**5. The agents run.**
-Configuration → Evaluation → Optimization loop → Airtable → optional CAD in Onshape or image via DALL-E 3.
-
----
-
-## HTML Report
-
-After every run, a self-contained HTML report opens automatically in your browser.
-
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  WoodShell RPi Cases                                        │
-│  Raspberry Pi enclosure family · Generated 2026-04-06      │
-├──────────────────────────┬──────────────────────────────────┤
-│  Score Radar             │  Optimization Journey            │
-│  (spider chart,          │  (line chart showing score       │
-│   all dimensions)        │   evolution across iterations)   │
-├──────────────────────────┴──────────────────────────────────┤
-│  Issues          ✓ No critical issues                       │
-├──────────────────────────┬──────────────────────────────────┤
-│  Selected Configuration  │  Product Variants                │
-│  Material = Walnut       │  • entry-level — plywood, bare   │
-│  Finish   = Oil          │  • standard    — walnut, oiled   │
-│  Fit      = Pi 5         │  • pro         — CNC + lacquer   │
-├──────────────────────────┴──────────────────────────────────┤
-│  Competitive Landscape                                       │
-│  Argon ONE  · €25 · aluminium shell · heavy · premium feel │
-│  Flirc Case · €15 · passive cooling · no GPIO · minimalist  │
-│  ...                                                        │
-├─────────────────────────────────────────────────────────────┤
-│  Bill of Materials (12 parts)          [Export BOM as CSV]  │
-│  PN-001  Walnut top panel   Enclosure  1                    │
-│  PN-002  M2.5 brass insert  Hardware   4                    │
-│  ...                                                        │
-├─────────────────────────────────────────────────────────────┤
-│  Product Render  (if DALL-E 3 was run)                      │
-│  [1792×1024 photorealistic render embedded as base64]       │
-└─────────────────────────────────────────────────────────────┘
+  You type: "modular home energy storage system"
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  PRODUCT FAMILY AGENT                                           │
+│  Generates the product's feature model from scratch             │
+│                                                                 │
+│  → Features: cell_chemistry, capacity_kwh, inverter_type, ...  │
+│  → Options:  LFP | NMC | LTO  /  5kWh | 10kWh | 15kWh  / ...  │
+│  → Constraints: "LTO requires active cooling"                   │
+│  → Variants: entry-level / standard / pro                       │
+│  → Scoring: usable_capacity, efficiency, install_cost           │
+│                                                                 │
+│  Writes family to Airtable                                      │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  COMPETITIVE ANALYSIS AGENT                                     │
+│  Identifies real market competitors using Claude's knowledge    │
+│                                                                 │
+│  → Tesla Powerwall 3   [€9,500]  — best ecosystem integration   │
+│  → Sonnen Eco          [€12,000] — premium, long warranty       │
+│  → BYD Battery-Box     [€5,800]  — value, modular expansion     │
+│  → Enphase IQ Battery  [€7,200]  — AC-coupled, easy retrofit    │
+│                                                                 │
+│  Market gap: nothing strong at €4k–6k with open protocols       │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  YOU  — define your intent                                      │
+│                                                                 │
+│  Option 0: Auto (Claude recommends based on market gap)         │
+│    → Goal: "best value at under €5,000 with open BMS"           │
+│    → Constraints: ["grid-tie capable", "IP55 outdoor rating"]   │
+│    → Context: "residential installer, EU market"                │
+│                                                                 │
+│  Or pick a variant, or type your own goal                       │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  CONFIGURATOR AGENT                                             │
+│  Selects valid options, builds initial BOM                      │
+│                                                                 │
+│  Configuration:  LFP cells / 10kWh / hybrid inverter / IP55    │
+│  BOM: 14 parts — cell modules, BMS, inverter, enclosure, ...    │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+              ┌────────────────┘
+              │   up to 5 iterations
+              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  EVALUATOR AGENT              →    OPTIMIZER AGENT              │
+│                                                                 │
+│  Scores each dimension:            Fixes critical issues first  │
+│  usable_capacity  7/10             then improves scores         │
+│  efficiency       6/10      →                                   │
+│  install_cost     8/10             Adjusts config + BOM         │
+│                                    and loops back               │
+│  Issues:                                                        │
+│  ⚠ BMS lacks CAN bus (critical)                                 │
+│  ⚠ no surge protection (critical)                               │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │  scores ≥ 8, no critical issues
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  BUILDER AGENT (Airtable)                                       │
+│  Writes final parts + BOM to your Airtable base                 │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+             ┌─────────────────┴─────────────────┐
+             │                                   │
+             ▼                                   ▼
+┌────────────────────────┐          ┌────────────────────────────┐
+│  CAD AGENT (optional)  │          │  IMAGE AGENT (optional)    │
+│  Onshape parametric    │          │  DALL-E 3 product render   │
+│  3D model via API      │          │  1792×1024 HD image        │
+└────────────┬───────────┘          └─────────────┬──────────────┘
+             └─────────────────┬─────────────────┘
+                               │
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  HTML REPORT  (auto-opens in browser)                           │
+│  Radar chart · Optimization journey · Competitive landscape     │
+│  BOM table · Configuration · Issues · Render image             │
+│                                                                 │
+│  → example_report.html                                          │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-The report is a single `.html` file — no server needed, shareable by email or Slack.
+See **[example_report.html](example_report.html)** for a full sample output.
 
 ---
 
@@ -109,28 +133,15 @@ Open `.env` and fill in:
 
 Onshape and OpenAI keys are optional — skip those steps and everything else still works.
 
-### 3. Airtable base structure
-
-The `--setup` command creates all tables automatically. If you prefer to create them manually:
-
-| Table | Fields |
-|---|---|
-| **Product Families** | Name, Product Type, Description |
-| **Features** | Name, Type, Family |
-| **Feature Options** | Feature, Value, Family |
-| **Constraints** | Rule, Family |
-| **Parts** | part_number, name, category, active |
-| **BOM** | parent, part_number (linked), quantity, level, notes |
-
-### 4. Verify setup
+### 3. First-time setup
 
 ```bash
 python plm_agents.py --setup
 ```
 
-This checks your API keys and creates all required Airtable tables automatically.
+Creates all required Airtable tables automatically and verifies your API keys.
 
-### 5. Run
+### 4. Run
 
 ```bash
 python plm_agents.py
@@ -139,7 +150,7 @@ python plm_agents.py
 Or skip the product idea prompt:
 
 ```bash
-python plm_agents.py --idea "ergonomic standing desk"
+python plm_agents.py --idea "modular home energy storage system"
 ```
 
 ---
@@ -157,13 +168,12 @@ python plm_agents.py --idea "ergonomic standing desk"
 ## Notes
 
 - **Product-agnostic** — scoring dimensions, features, and CAD geometry all come from the product family the system defines, not hardcoded rules.
-- **Competitive analysis** — real competitors (from Claude's knowledge) identified before you pick your intent, shown as a table in the HTML report.
-- **Session saved** after each run (`.last_session.json`, gitignored) — next run offers CAD-only or image-only from the last design, with full family context preserved.
-- **Variant picker** — after the product family is defined, choose a predefined variant (entry-level / standard / pro) as your starting intent, or let the system recommend one automatically (option 0).
-- **HTML report** auto-generated after each run — radar chart, optimization journey chart, competitive landscape, BOM table with CSV export, configuration, issues, and render image. Opens in your browser automatically.
+- **Competitive analysis** — real competitors identified before you set your intent; auto-intent uses the market gap to recommend differentiated goals.
+- **Session saved** after each run (`.last_session.json`, gitignored) — next run offers CAD-only or image-only from the last design.
+- **Variant picker** — choose a predefined variant as your starting intent, or pick option 0 to let the system recommend one based on the competitive landscape.
+- **HTML report** auto-generated after each run — radar chart, optimization journey, competitive landscape table, BOM with CSV export. Opens automatically.
 - **`--setup` flag** — verifies keys and creates Airtable tables without running the full pipeline.
 - **`--idea` flag** — skip the interactive prompt: `python plm_agents.py --idea "espresso machine"`.
-- **Prompt caching** on evaluator/optimizer system prompts cuts API cost during optimization loops.
 
 ---
 
