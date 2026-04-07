@@ -1,6 +1,6 @@
-# AI Product Agents
+# Design to Intent
 
-A multi-agent system that takes a product idea and a design intent, then configures, evaluates, and builds it — automatically. Works for any product.
+AI-driven product design — from idea to optimised BOM, competitive landscape, and report.
 
 ---
 
@@ -38,14 +38,14 @@ A multi-agent system that takes a product idea and a design intent, then configu
                                │
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  YOU  — define your intent                                      │
+│  INTENT DEFINITION                                              │
 │                                                                 │
-│  Option 0: Auto (Claude recommends based on market gap)         │
+│  Option 0: Auto — Claude recommends based on market gap         │
 │    → Goal: "best value at under €5,000 with open BMS"           │
 │    → Constraints: ["grid-tie capable", "IP55 outdoor rating"]   │
 │    → Context: "residential installer, EU market"                │
 │                                                                 │
-│  Or pick a variant, or type your own goal                       │
+│  Or pick a predefined variant, or type your own goal            │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
                                ▼
@@ -58,21 +58,21 @@ A multi-agent system that takes a product idea and a design intent, then configu
 └──────────────────────────────┬──────────────────────────────────┘
                                │
               ┌────────────────┘
-              │   up to 5 iterations
+              │   up to 3 iterations
               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  EVALUATOR AGENT              →    OPTIMIZER AGENT              │
 │                                                                 │
 │  Scores each dimension:            Fixes critical issues first  │
-│  usable_capacity  7/10             then improves scores         │
+│  usable_capacity  7/10             then improves toward intent  │
 │  efficiency       6/10      →                                   │
 │  install_cost     8/10             Adjusts config + BOM         │
-│                                    and loops back               │
+│                                    Stops early if no progress   │
 │  Issues:                                                        │
 │  ⚠ BMS lacks CAN bus (critical)                                 │
 │  ⚠ no surge protection (critical)                               │
 └──────────────────────────────┬──────────────────────────────────┘
-                               │  scores ≥ 8, no critical issues
+                               │  scores ≥ 8 or no improvement
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  BUILDER AGENT (Airtable)                                       │
@@ -94,13 +94,29 @@ A multi-agent system that takes a product idea and a design intent, then configu
 ┌─────────────────────────────────────────────────────────────────┐
 │  HTML REPORT  (auto-opens in browser)                           │
 │  Radar chart · Optimization journey · Competitive landscape     │
-│  BOM table · Configuration · Issues · Render image             │
-│                                                                 │
-│  → example_report.html                                          │
+│  BOM table with CSV export · Configuration · Issues · Render   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 See **[example_report.html](example_report.html)** for a full sample output.
+
+---
+
+## Running
+
+### CLI
+```bash
+python plm_agents.py
+python plm_agents.py --idea "ergonomic standing desk"
+python plm_agents.py --idea "espresso machine" --goal "maximum extraction quality" --constraints "cost under €800, domestic voltage"
+```
+
+### Desktop GUI
+```bash
+python gui.py
+```
+
+The GUI collects your product idea, optional intent fields, and visualisation choice, then streams all agent output live into a log window. When the pipeline finishes, a **View Report** button opens the HTML report.
 
 ---
 
@@ -131,7 +147,7 @@ Open `.env` and fill in:
 | `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY` | [dev-portal.onshape.com/keys](https://dev-portal.onshape.com/keys) _(CAD only)_ |
 | `ONSHAPE_DID` / `ONSHAPE_WID` / `ONSHAPE_EID` | Your Onshape document URL _(CAD only)_ |
 
-Onshape and OpenAI keys are optional — skip those steps and everything else still works.
+Onshape and OpenAI keys are optional.
 
 ### 3. First-time setup
 
@@ -141,39 +157,26 @@ python plm_agents.py --setup
 
 Creates all required Airtable tables automatically and verifies your API keys.
 
-### 4. Run
-
-```bash
-python plm_agents.py
-```
-
-Or skip the product idea prompt:
-
-```bash
-python plm_agents.py --idea "modular home energy storage system"
-```
-
 ---
 
 ## Models
 
-| Agent | Model |
-|---|---|
-| Product Family, Competitive Analysis, Configurator, Evaluator, Optimizer | `claude-sonnet-4-6` |
-| CAD planning | `claude-opus-4-6` with extended thinking |
-| Image generation | DALL-E 3 (1792×1024 HD) |
+| Agent | Model | Reason |
+|---|---|---|
+| Product Family, Competitive Analysis | `claude-haiku-4-5` | Structured data generation — fast and cheap |
+| Configurator, Evaluator, Optimizer | `claude-sonnet-4-6` | Reasoning quality matters here |
+| CAD planning | `claude-opus-4-6` | Extended thinking for geometry |
+| Image generation | DALL-E 3 (1792×1024 HD) | |
 
 ---
 
 ## Notes
 
-- **Product-agnostic** — scoring dimensions, features, and CAD geometry all come from the product family the system defines, not hardcoded rules.
-- **Competitive analysis** — real competitors identified before you set your intent; auto-intent uses the market gap to recommend differentiated goals.
-- **Session saved** after each run (`.last_session.json`, gitignored) — next run offers CAD-only or image-only from the last design.
-- **Variant picker** — choose a predefined variant as your starting intent, or pick option 0 to let the system recommend one based on the competitive landscape.
-- **HTML report** auto-generated after each run — radar chart, optimization journey, competitive landscape table, BOM with CSV export. Opens automatically.
-- **`--setup` flag** — verifies keys and creates Airtable tables without running the full pipeline.
-- **`--idea` flag** — skip the interactive prompt: `python plm_agents.py --idea "espresso machine"`.
+- **Product-agnostic** — scoring dimensions, features, and CAD geometry all come from the product family the system defines, not hardcoded rules. Works for any physical product.
+- **Competitive analysis** — real competitors identified before you set your intent; auto-intent uses the market gap to recommend a differentiated goal.
+- **Diminishing returns** — the optimizer loop stops early if scores don't improve iteration-over-iteration, saving API calls.
+- **Session saved** after each run — next run offers CAD-only or image-only from the last design, with full family context preserved.
+- **Fully non-interactive** — pass `--idea`, `--goal`, `--constraints`, `--context` to skip all prompts (used by the GUI).
 
 ---
 

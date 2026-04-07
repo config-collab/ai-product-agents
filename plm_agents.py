@@ -1,20 +1,24 @@
 """
-Multi-Agent PLM System for AI-Driven Product Configuration
-==========================================================
+Design to Intent — Multi-Agent Product Design System
+=====================================================
 Architecture:
-  User Prompt
-  → Orchestrator
-  → Product Family Agent (defines product line: features, options, constraints, variants)
-  → Configurator Agent   (selects valid configuration from family + builds BOM)
-  → Evaluator Agent      (scores dimensions defined by the product family)
-  → Optimizer Agent      (fixes critical issues first, then improves scores)
-  → PLM Agent            (persists parts + BOM to Airtable)
-  → CAD Agent            (maps BOM → parametric geometry → Onshape via MCP)
+  Product Idea
+  → Product Family Agent   (defines product line: features, options, constraints, variants)
+  → Competitive Analysis   (maps real market competitors and gaps)
+  → Intent Definition      (goal + constraints + context — manually or auto from market gap)
+  → Configurator Agent     (selects valid configuration from family + builds BOM)
+  → Evaluator Agent        (scores dimensions defined by the product family)
+  → Optimizer Agent        (fixes critical issues first, then improves scores toward intent)
+  → Builder Agent          (persists parts + BOM to Airtable)
+  → CAD Agent (optional)   (maps BOM → parametric geometry → Onshape via MCP)
+  → Image Agent (optional) (DALL-E 3 product render)
+  → HTML Report            (radar chart, journey chart, competitive landscape, BOM)
 
 Setup:
   1. Copy .env.example to .env and fill in your API keys.
   2. pip install -r requirements.txt
-  3. python plm_agents.py
+  3. python plm_agents.py        (CLI)
+     python gui.py               (desktop GUI)
 """
 
 import json
@@ -1738,13 +1742,16 @@ def orchestrator(intent: Intent, family: dict, competitors: list | None = None) 
 
     # Step 4 — visualise / build
     print(f"\n  BOM ready. {len(best_bom)} parts configured.")
-    print("""
+    # DTI_VIS_CHOICE is set by the GUI to avoid an interactive prompt
+    vis_choice = os.getenv("DTI_VIS_CHOICE", "")
+    if not vis_choice:
+        print("""
   What would you like to do next?
     1  Generate 3D model in Onshape
     2  Generate product image  (DALL-E 3)
     3  Skip
 """)
-    vis_choice = input("  Choose [1/2/3]: ").strip()
+        vis_choice = input("  Choose [1/2/3]: ").strip()
 
     image_result = {"status": "skipped", "file": None}
     cad_result   = {"status": "skipped", "cad_steps": [], "results": []}
@@ -1942,14 +1949,15 @@ def _save_html_report(outcome: dict) -> None:
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>{f_info.get('name','Product')} — Design Report</title>
+<title>Design to Intent — {f_info.get('name','Product')}</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   *{{box-sizing:border-box}}
   body{{font-family:system-ui,sans-serif;margin:0;background:#f1f5f9;color:#1e293b}}
-  .header{{background:linear-gradient(135deg,#0f172a,#1e40af);color:white;padding:2.5rem 2rem}}
-  .header h1{{margin:0 0 .4rem;font-size:2rem;font-weight:700}}
-  .header p{{margin:0;opacity:.65;font-size:.95rem}}
+  .header{{background:linear-gradient(135deg,#0f172a 0%,#1e3a8a 60%,#2563eb 100%);color:white;padding:2.5rem 2rem 2rem}}
+  .header-brand{{font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;opacity:.55;font-weight:600;margin-bottom:.6rem}}
+  .header h1{{margin:0 0 .35rem;font-size:2rem;font-weight:700;letter-spacing:-.02em}}
+  .header p{{margin:0;opacity:.6;font-size:.9rem}}
   .body{{max-width:1000px;margin:2rem auto;padding:0 1rem}}
   .grid{{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;margin-bottom:1.5rem}}
   .section{{background:white;border-radius:12px;padding:1.5rem;box-shadow:0 1px 6px rgba(0,0,0,.07)}}
@@ -1974,8 +1982,9 @@ def _save_html_report(outcome: dict) -> None:
 </head>
 <body>
 <div class="header">
+  <div class="header-brand">Design to Intent</div>
   <h1>{f_info.get('name','Product')}</h1>
-  <p>{f_info.get('description','')} &nbsp;·&nbsp; Generated {timestamp}</p>
+  <p>{f_info.get('description','')} &nbsp;·&nbsp; {timestamp}</p>
 </div>
 <div class="body">
 
@@ -2038,6 +2047,9 @@ def _save_html_report(outcome: dict) -> None:
 
   {img_html}
 
+</div>
+<div style="text-align:center;padding:2rem 1rem 3rem;font-size:.78rem;color:#94a3b8">
+  Design to Intent &nbsp;·&nbsp; {timestamp} &nbsp;·&nbsp; {f_info.get('product_type','Product')}
 </div>
 
 <script>
@@ -2119,16 +2131,17 @@ function downloadCSV() {{
 def ask_product_idea() -> str:
     """Ask the user what product they want to design."""
     print("\n" + "═"*60)
-    print("  AI PRODUCT PLM AGENT")
+    print("  DESIGN TO INTENT")
+    print("  AI-driven product design — from idea to optimised BOM")
     print("═"*60)
     print("""
 What product do you want to design?
 
 Examples:
+  - modular home energy storage system
   - electric mountain bike
   - professional inspection robot
   - espresso machine for home use
-  - industrial inspection robot
   - portable solar power station
 """)
     idea = input("  Product idea: ").strip()
@@ -2274,25 +2287,31 @@ Enter one per line. Press Enter on an empty line when done.
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="AI Product Agents")
-    parser.add_argument("--setup", action="store_true",
+    parser = argparse.ArgumentParser(description="Design to Intent — AI Product Design")
+    parser.add_argument("--setup",       action="store_true",
                         help="Verify config and create Airtable tables, then exit")
-    parser.add_argument("--idea",  type=str, default="",
+    parser.add_argument("--idea",        type=str, default="",
                         help="Product idea (skips the interactive prompt)")
+    parser.add_argument("--goal",        type=str, default="",
+                        help="Design goal (skips variant picker / auto-intent prompt)")
+    parser.add_argument("--constraints", type=str, default="",
+                        help="Hard constraints, comma-separated")
+    parser.add_argument("--context",     type=str, default="",
+                        help="Extra context (use case, environment, user profile)")
     args = parser.parse_args()
 
     _check_config()
     setup_airtable()
 
     if args.setup:
-        print("\n  Setup complete. You are ready to run: python plm_agents.py")
+        print("\n  Setup complete. Run: python plm_agents.py  or  python gui.py")
         raise SystemExit(0)
 
     last_bom, last_family = _load_last_session()
 
     if last_bom:
         print("\n" + "═"*60)
-        print("  AI PRODUCT AGENTS")
+        print("  DESIGN TO INTENT")
         print("═"*60)
         family_name = (last_family or {}).get("family", {}).get("name", "")
         print(f"\n  Last design found — {len(last_bom)} parts"
@@ -2326,5 +2345,14 @@ if __name__ == "__main__":
         product_idea = args.idea or ask_product_idea()
         family       = product_family_agent(product_idea)
         competitors  = competitive_agent(product_idea, family)
-        intent       = ask_intent(family, competitors=competitors)
+        # Non-interactive mode when --goal is supplied (e.g. from GUI)
+        if args.goal:
+            constraints = [c.strip() for c in args.constraints.split(",") if c.strip()]
+            intent = Intent(goal=args.goal, constraints=constraints, context=args.context)
+            print(f"\n  Intent (from CLI args):")
+            print(f"    Goal        : {intent.goal}")
+            print(f"    Constraints : {intent.constraints}")
+            print(f"    Context     : {intent.context or 'none'}")
+        else:
+            intent = ask_intent(family, competitors=competitors)
         orchestrator(intent, family, competitors=competitors)
