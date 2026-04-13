@@ -45,7 +45,7 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:50]
 
 
-def _call(prompt: str, max_tokens: int = 4096) -> str:
+def _call(prompt: str, max_tokens: int = 8192) -> str:
     rsp = _client.messages.create(
         model=_MODEL,
         max_tokens=max_tokens,
@@ -56,7 +56,12 @@ def _call(prompt: str, max_tokens: int = 4096) -> str:
 
 def _extract_json(text: str):
     """Extract first JSON array or object from text."""
-    # Fenced block
+    # Strip comments FIRST (before extraction, so fenced-block regex isn't confused
+    # and end-of-string comments are caught by the $ anchor)
+    text = re.sub(r"//[^\n\"]*(\n|$)", "\n", text)
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+
+    # Try fenced block
     m = re.search(r"```(?:json)?\s*(\[[\s\S]*?\]|\{[\s\S]*?\})\s*```", text)
     if m:
         raw = m.group(1)
@@ -67,7 +72,8 @@ def _extract_json(text: str):
         )
         end = max(text.rfind("]"), text.rfind("}")) + 1
         raw = text[start:end]
-    # Strip trailing commas
+
+    # Strip trailing commas before } or ]
     raw = re.sub(r",\s*([}\]])", r"\1", raw)
     return json.loads(raw)
 
