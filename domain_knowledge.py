@@ -64,6 +64,7 @@ class DomainContext:
     graph_triples:    list[KGTriple]  = field(default_factory=list)
     validation_trace: dict            = field(default_factory=dict)
     detected_domain:  str             = "default"
+    company_sources:  list[dict]      = field(default_factory=list)  # company_knowledge records
 
     # Keep a reference to the KG for in-loop queries from evaluator
     _kg: object = field(default=None, repr=False)
@@ -82,6 +83,28 @@ class DomainContext:
 
     def prompt_block(self) -> str:
         parts = []
+        # Company-sourced knowledge always comes first — highest priority
+        if self.company_sources:
+            lines = [
+                "=== COMPANY-VERIFIED KNOWLEDGE (HIGHEST PRIORITY) ===",
+                "These constraints and decisions are taken directly from your company's own",
+                "engineering records. Treat them as non-negotiable ground truth — they override",
+                "any domain knowledge or LLM inference below.\n",
+            ]
+            for r in self.company_sources:
+                sf = r.get("source_file", "unknown")
+                sd = r.get("source_date", "")
+                hdr = f"  [File: {sf}" + (f"  {sd}" if sd else "") + "]"
+                lines.append(hdr)
+                for c in r.get("constraints", []):
+                    if isinstance(c, str) and c.strip():
+                        lines.append(f"    CONSTRAINT: {c.strip()}")
+                for d in r.get("decisions", []):
+                    if isinstance(d, str) and d.strip():
+                        lines.append(f"    DECISION:   {d.strip()}")
+                if r.get("intent"):
+                    lines.append(f"    INTENT:     {r['intent']}")
+            parts.append("\n".join(lines))
         if self.rag_chunks:
             parts.append("=== DOMAIN KNOWLEDGE (RAG) ===\n" + self.rag_block())
         if self.graph_triples:
@@ -89,7 +112,7 @@ class DomainContext:
         return "\n\n".join(parts) if parts else ""
 
     def is_empty(self) -> bool:
-        return not self.rag_chunks and not self.graph_triples
+        return not self.rag_chunks and not self.graph_triples and not self.company_sources
 
     def sources_for_report(self) -> list[dict]:
         """Return structured list for the HTML report."""
@@ -109,6 +132,7 @@ class DomainContext:
 
     def vv_coverage(self) -> dict:
         return {
+            "company_sourced": sum(1 for c in self.rag_chunks if c.source_tag == "company_sourced"),
             "graph":           sum(1 for t in self.graph_triples if t.tag == "sourced"),
             "rag":             len(self.rag_chunks),
             "domain_specific": sum(1 for c in self.rag_chunks if c.source_tag == "domain_specific"),
@@ -1114,24 +1138,74 @@ class DomainKnowledgeAgent:
         """
         Retrieve domain knowledge for a product idea.
         detected_domain: if provided (from IntentElicitationAgent), skip re-detection.
+        Auto-detects company_knowledge_{slug}.json and injects it with highest priority.
         """
+        import json as _json
         query  = " ".join(filter(None, [product_idea, product_type, intent_goal]))
         pt     = product_type or product_idea
         domain = detected_domain or detect_domain(query)
 
         print(f"\n  Detected domain : {domain}")
+
+        # ── Load company knowledge if available ───────────────────────────────
+        company_records: list[dict] = []
+        company_extra_docs: list[dict] = []
+        company_files_used: list[str] = []
+
+        slug = re.sub(r"[^a-z0-9]+", "_", product_idea.lower()).strip("_")[:50]
+        ck_path = os.path.join(os.path.dirname(__file__), f"company_knowledge_{slug}.json")
+        if os.path.exists(ck_path):
+            try:
+                with open(ck_path, encoding="utf-8") as _fh:
+                    ck_data = _json.load(_fh)
+                company_records = ck_data.get("records", [])
+                for r in company_records:
+                    sf = r.get("source_file", "unknown")
+                    sd = r.get("source_date", "")
+                    if sf not in company_files_used:
+                        company_files_used.append(sf)
+                    # Add as RAG doc so semantic retrieval can find it too
+                    doc_text = r.get("text", "")
+                    if doc_text:
+                        company_extra_docs.append({
+                            "text":       doc_text,
+                            "url":        f"company:{sf}",
+                            "date":       sd or "2024-01",
+                            "source_tag": "company_sourced",
+                        })
+                    # Load part_relationships into KG
+                    for rel in r.get("part_relationships", []):
+                        pa = rel.get("part_a", "")
+                        pb = rel.get("part_b", "")
+                        rv = rel.get("relation", "relates_to")
+                        if pa and pb:
+                            self._kg.add_triple(
+                                re.sub(r"\s+", "_", pa.lower()),
+                                rv,
+                                re.sub(r"\s+", "_", pb.lower()),
+                                tag="sourced",
+                            )
+                print(f"  ✓ Company knowledge: {len(company_records)} records from "
+                      f"{len(company_files_used)} file(s) — {ck_path}")
+            except Exception as _ck_err:
+                print(f"  ⚠ Could not load company knowledge: {_ck_err}")
+
+        # ── RAG ingestion and retrieval ───────────────────────────────────────
+        all_extra_docs = company_extra_docs + (self._custom_docs or [])
         print(f"  Ingesting sources for: {pt!r}...")
-        n_docs = self._rag.ingest(pt, domain=domain, extra_docs=self._custom_docs or None)
+        n_docs = self._rag.ingest(pt, domain=domain,
+                                  extra_docs=all_extra_docs or None)
         if n_docs:
             print(f"  ✓ {n_docs} documents indexed (domain={domain},"
-                  f" custom={len(self._custom_docs)})")
+                  f" company={len(company_extra_docs)}, custom={len(self._custom_docs)})")
 
         print(f"  Retrieving RAG chunks...")
         chunks = self._rag.retrieve(query, pt, domain=domain,
-                                    extra_docs=self._custom_docs or None)
+                                    extra_docs=all_extra_docs or None)
         stale  = sum(1 for c in chunks if c.stale)
         ds     = sum(1 for c in chunks if c.source_tag == "domain_specific")
-        print(f"  ✓ {len(chunks)} chunks ({ds} domain-specific, {stale} stale)")
+        cs     = sum(1 for c in chunks if c.source_tag == "company_sourced")
+        print(f"  ✓ {len(chunks)} chunks ({cs} company, {ds} domain-specific, {stale} stale)")
 
         print(f"  Querying knowledge graph...")
         keywords = _extract_keywords(product_idea + " " + intent_goal + " " + domain)
@@ -1141,15 +1215,18 @@ class DomainKnowledgeAgent:
         print(f"  ✓ {len(triples)} triples ({sourced} sourced, {inferred} llm_reasoned)")
 
         trace = {
-            "rag_chunks":      len(chunks),
-            "stale_chunks":    stale,
-            "domain_specific": ds,
-            "graph_triples":   len(triples),
-            "sourced":         sourced,
-            "llm_reasoned":    inferred,
-            "sources":         list({c.source_url for c in chunks}),
-            "detected_domain": domain,
-            "custom_sources":  len(self._custom_docs),
+            "rag_chunks":         len(chunks),
+            "stale_chunks":       stale,
+            "domain_specific":    ds,
+            "company_sourced":    cs,
+            "graph_triples":      len(triples),
+            "sourced":            sourced,
+            "llm_reasoned":       inferred,
+            "sources":            list({c.source_url for c in chunks}),
+            "detected_domain":    domain,
+            "custom_sources":     len(self._custom_docs),
+            "company_files_used": company_files_used,
+            "company_records":    len(company_records),
         }
 
         ctx = DomainContext(
@@ -1157,6 +1234,7 @@ class DomainKnowledgeAgent:
             graph_triples    = triples,
             validation_trace = trace,
             detected_domain  = domain,
+            company_sources  = company_records,
         )
         ctx._kg = self._kg   # expose KG for in-loop evaluator queries
         return ctx
